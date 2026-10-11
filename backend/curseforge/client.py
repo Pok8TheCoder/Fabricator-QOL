@@ -36,6 +36,32 @@ SORT_INDEX = {
     "newest": (11, "desc"),
 }
 
+# Same public default as Prism Launcher (CMakeLists.txt `Launcher_CURSEFORGE_API_KEY`).
+# Used when CURSEFORGE_API_KEY is unset. Set CURSEFORGE_DISABLE_BUILTIN_KEY=1 to
+# require your own console.curseforge.com key instead.
+_PRISM_LAUNCHER_DEFAULT_KEY = (
+    "$2a$10$wuAJuNZuted3NORVmpgUC.m8sI.pv1tOPKZyBgLFGjxFp/br0lZCC"
+)
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def resolve_curseforge_api_key(explicit: str | None = None) -> tuple[str, str]:
+    """Return (api_key, source): ``builtin`` (Prism default), ``env``, ``explicit``, or ``none``."""
+    if explicit and str(explicit).strip():
+        return str(explicit).strip(), "explicit"
+    if _env_truthy("CURSEFORGE_DISABLE_BUILTIN_KEY"):
+        env_key = (os.environ.get("CURSEFORGE_API_KEY") or "").strip()
+        return (env_key, "env") if env_key else ("", "none")
+    if _env_truthy("CURSEFORGE_USE_BUILTIN_KEY"):
+        return _PRISM_LAUNCHER_DEFAULT_KEY, "builtin"
+    env_key = (os.environ.get("CURSEFORGE_API_KEY") or "").strip()
+    if env_key:
+        return env_key, "env"
+    return _PRISM_LAUNCHER_DEFAULT_KEY, "builtin"
+
 
 class CurseForgeApiError(Exception):
     def __init__(self, message: str, status_code: int | None = None):
@@ -48,10 +74,77 @@ class CurseForgeClient:
     USER_AGENT = "Pok8TheCoder/Fabricator-QOL (CurseForge integration)"
 
     def __init__(self, api_key: str | None = None):
-        self.api_key = (api_key or os.environ.get("CURSEFORGE_API_KEY") or "").strip()
+        self.api_key, self.api_key_source = resolve_curseforge_api_key(api_key)
 
     def configured(self) -> bool:
         return bool(self.api_key)
+
+    def key_malformed(self) -> bool:
+        """True when a key is set but does not look like a Studios console key."""
+        key = self.api_key
+        if not key:
+            return False
+        return not key.startswith("$2a$")
+
+    def probe(self) -> Dict[str, Any]:
+        """Check whether the stored key works for mod search (per REST API docs)."""
+        if not self.configured():
+            return {
+                "configured": False,
+                "working": False,
+                "malformed": False,
+                "detail": (
+                    "Set CURSEFORGE_API_KEY in /etc/fabricator/fabricator.env "
+                    "(from https://console.curseforge.com/, not legacy API tokens)."
+                ),
+            }
+        if self.key_malformed():
+            return {
+                "configured": True,
+                "working": False,
+                "malformed": True,
+                "detail": (
+                    "CURSEFORGE_API_KEY should start with $2a$10$ from "
+                    "https://console.curseforge.com/. cfc_pat_* tokens are not valid here."
+                ),
+            }
+        try:
+            self._request(
+                "GET",
+                "/mods/search",
+                params={
+                    "gameId": MINECRAFT_GAME_ID,
+                    "classId": CLASS_MOD,
+                    "pageSize": 1,
+                    "searchFilter": "a",
+                },
+            )
+            payload = {
+                "configured": True,
+                "working": True,
+                "malformed": False,
+                "key_source": self.api_key_source,
+            }
+            if self.api_key_source == "builtin":
+                payload["detail"] = (
+                    "Using the same built-in CurseForge API key as Prism Launcher. "
+                    "Set CURSEFORGE_API_KEY to override with your own console key."
+                )
+            return payload
+        except CurseForgeApiError as exc:
+            detail = str(exc)
+            if self.api_key_source == "env":
+                detail += (
+                    " Remove CURSEFORGE_API_KEY or set CURSEFORGE_USE_BUILTIN_KEY=1 "
+                    "to use the Prism Launcher default key instead."
+                )
+            return {
+                "configured": True,
+                "working": False,
+                "malformed": False,
+                "key_source": self.api_key_source,
+                "detail": detail,
+            }
 
     def _headers(self) -> Dict[str, str]:
         if not self.api_key:
@@ -76,7 +169,16 @@ class CurseForgeClient:
         if response.status_code == 401:
             raise CurseForgeApiError("CurseForge API key rejected (401)", 401)
         if response.status_code == 403:
-            raise CurseForgeApiError("CurseForge API forbidden (403)", 403)
+            body = (response.text or "").strip().replace("\n", " ")[:220]
+            msg = "CurseForge rejected the API key (403)."
+            if body:
+                msg += f" {body}"
+            msg += (
+                " Regenerate at https://console.curseforge.com/ ($2a$10$… format). "
+                "If you run a third-party panel, apply for API access per "
+                "https://docs.curseforge.com/rest-api/"
+            )
+            raise CurseForgeApiError(msg, 403)
         if not response.ok:
             raise CurseForgeApiError(
                 f"CurseForge API error {response.status_code}: {response.text[:200]}",
@@ -132,7 +234,8 @@ class CurseForgeClient:
             params["gameVersion"] = mc_version
         loader_key = (loader or "").lower()
         if loader_key in LOADER_TYPE:
-            params["modLoaderType"] = LOADER_TYPE[loader_key]
+            # Prism FlameAPI passes modLoaderTypes=[id] on search (not modLoaderType).
+            params["modLoaderTypes"] = f"[{LOADER_TYPE[loader_key]}]"
 
         response = self._request("GET", "/mods/search", params=params)
         data = self._json_data(response) or []
@@ -177,6 +280,15 @@ class CurseForgeClient:
         if data and isinstance(data[0], dict):
             return self._normalize_mod_hit(data[0], modpack=modpack)
         return None
+
+    def get_files_by_ids(self, file_ids: List[int]) -> List[Dict[str, Any]]:
+        """POST /mods/files — batch metadata (Prism FileResolvingTask)."""
+        ids = [int(x) for x in file_ids if x]
+        if not ids:
+            return []
+        response = self._request("POST", "/mods/files", json={"fileIds": ids})
+        data = self._json_data(response) or []
+        return [f for f in data if isinstance(f, dict)]
 
     def list_files(
         self,
@@ -225,6 +337,34 @@ class CurseForgeClient:
 
         files.sort(key=score, reverse=True)
         return files[0]
+
+    @staticmethod
+    def _sha1_from_cf_file(file_data: Dict[str, Any]) -> str | None:
+        for h in file_data.get("hashes") or []:
+            if isinstance(h, dict) and h.get("algo") == 1 and h.get("value"):
+                return str(h["value"])
+        return None
+
+    def _modrinth_download_for_sha1(self, sha1: str, mods_dir: Path) -> Path | None:
+        """Prism FallbackMRBlockedMods: blocked CF files may exist on Modrinth."""
+        if not _env_truthy("CURSEFORGE_MODRINTH_FALLBACK"):
+            return None
+        try:
+            versions = ModrinthClient().get_versions_by_hashes([sha1], algorithm="sha1")
+        except Exception as exc:
+            logger.debug("Modrinth fallback lookup failed for %s: %s", sha1, exc)
+            return None
+        version = versions.get(sha1.lower()) if versions else None
+        if not version:
+            return None
+        for f in version.get("files") or []:
+            if not isinstance(f, dict):
+                continue
+            url = f.get("url")
+            filename = f.get("filename")
+            if url and filename:
+                return self.download_to(str(url), mods_dir, str(filename), sha1=sha1)
+        return None
 
     def file_download_url(self, mod_id: str | int, file_id: str | int) -> str:
         response = self._request(
@@ -376,6 +516,17 @@ class CurseForgeClient:
             mods_dir = install_path / "mods"
             mods_dir.mkdir(parents=True, exist_ok=True)
 
+            file_ids: List[int] = []
+            for entry in entries:
+                fid = entry.get("fileID") or entry.get("fileId")
+                if fid:
+                    file_ids.append(int(fid))
+            file_meta: Dict[int, Dict[str, Any]] = {}
+            for start in range(0, len(file_ids), 50):
+                for row in self.get_files_by_ids(file_ids[start : start + 50]):
+                    if isinstance(row.get("id"), int):
+                        file_meta[row["id"]] = row
+
             for idx, entry in enumerate(entries):
                 if progress_callback:
                     progress_callback(
@@ -390,13 +541,20 @@ class CurseForgeClient:
                     files_skipped.append(str(entry))
                     continue
                 try:
-                    url = self.file_download_url(project_id, file_id)
-                    meta = self._request(
-                        "GET", f"/mods/{int(project_id)}/files/{int(file_id)}"
-                    )
-                    file_data = self._json_data(meta) or {}
+                    file_data = file_meta.get(int(file_id)) or {}
                     name = file_data.get("fileName") or f"{project_id}-{file_id}.jar"
-                    dest = self.download_to(url, mods_dir, name)
+                    url = file_data.get("downloadUrl") or ""
+                    if not url:
+                        url = self.file_download_url(project_id, file_id)
+                    sha1 = self._sha1_from_cf_file(file_data)
+                    try:
+                        dest = self.download_to(url, mods_dir, name, sha1=sha1)
+                    except CurseForgeApiError:
+                        dest = None
+                        if sha1:
+                            dest = self._modrinth_download_for_sha1(sha1, mods_dir)
+                        if dest is None:
+                            raise
                     files_installed.append(f"mods/{dest.name}")
                 except CurseForgeApiError as exc:
                     logger.warning("Skipped CF mod file %s/%s: %s", project_id, file_id, exc)

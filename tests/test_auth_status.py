@@ -8,6 +8,7 @@ def test_status_enabled_unauthenticated(auth_client):
         "authenticated": False,
         "needs_setup": False,
         "managed": False,
+        "curseforge_configured": False,
     }
 
 
@@ -19,6 +20,7 @@ def test_status_enabled_authenticated(authed_client):
         "authenticated": True,
         "needs_setup": False,
         "managed": False,
+        "curseforge_configured": False,
         # Only a caller that has proved itself sees the version.
         "panel_version": get_app_version(),
     }
@@ -30,6 +32,7 @@ def test_status_setup_mode(setup_client):
         "authenticated": False,
         "needs_setup": True,
         "managed": False,
+        "curseforge_configured": False,
     }
 
 
@@ -40,6 +43,7 @@ def test_status_disabled(client):
         "authenticated": False,
         "needs_setup": False,
         "managed": False,
+        "curseforge_configured": False,
     }
 
 

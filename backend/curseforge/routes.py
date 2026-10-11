@@ -46,7 +46,7 @@ def _record_cf_install(server_id: str, mod_id: str, filename: str, resolved: dic
 
 @curseforge_bp.route("/status", methods=["GET"])
 def curseforge_status():
-    return jsonify({"configured": _client.configured()})
+    return jsonify(_client.probe())
 
 
 @curseforge_bp.route("/search", methods=["GET"])

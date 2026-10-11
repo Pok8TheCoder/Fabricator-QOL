@@ -9,6 +9,24 @@ import { isLoaderCategory } from '../utils/loaderKind'
 export function parseCurseForgeRef(input) {
   const raw = (input || '').trim()
   if (!raw) return { slug: '', modpack: true }
+
+  // Prism Launcher import: curseforge://install?addonId=248787&fileId=4573208
+  if (raw.startsWith('curseforge://')) {
+    try {
+      const parsed = new URL(raw.replace('curseforge://', 'https://curseforge.local/'))
+      const addonId = parsed.searchParams.get('addonId') || parsed.searchParams.get('projectId')
+      const fileId = parsed.searchParams.get('fileId')
+      if (addonId && fileId) {
+        return { slug: '', modpack: true, projectId: addonId, fileId }
+      }
+      if (addonId) {
+        return { slug: addonId, modpack: true }
+      }
+    } catch {
+      return { slug: '', modpack: true }
+    }
+  }
+
   if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
     return { slug: raw.replace(/^@/, ''), modpack: true }
   }
@@ -194,15 +212,19 @@ export function useModpackImport({ mcVersion, loader, catalogSource } = {}) {
 
   async function resolveByLink() {
     if (getCatalog() === 'curseforge') {
-      const { slug } = parseCurseForgeRef(modpackLink.value)
+      const ref = parseCurseForgeRef(modpackLink.value)
+      const slug = ref.slug || ref.projectId
       if (!slug) {
-        errorMessage.value = 'Enter a valid CurseForge modpack link or slug.'
+        errorMessage.value = 'Enter a valid CurseForge modpack link, curseforge:// URL, or slug.'
         return
       }
       resolving.value = true
       errorMessage.value = ''
       try {
         const project = await getCurseForgeProject(slug)
+        if (ref.fileId) {
+          project.preferred_file_id = ref.fileId
+        }
         searchResults.value = [project]
         selectPack(project)
       } catch (error) {

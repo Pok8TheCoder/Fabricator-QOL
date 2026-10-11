@@ -34,7 +34,7 @@
 
         <select v-model="catalogSource" class="filters__catalog" @change="onCatalogChange">
           <option value="modrinth">Modrinth</option>
-          <option value="curseforge" :disabled="!curseForgeReady">CurseForge</option>
+          <option value="curseforge">CurseForge</option>
         </select>
 
         <button
@@ -47,7 +47,13 @@
       </div>
 
       <p v-if="catalogSource === 'curseforge' && !curseForgeReady" class="catalog-hint">
-        CurseForge search needs <code>CURSEFORGE_API_KEY</code> in <code>/etc/fabricator/fabricator.env</code>.
+        <template v-if="curseForgeStatusDetail">{{ curseForgeStatusDetail }}</template>
+        <template v-else>
+          Add a <code>$2a$10$…</code> key from
+          <a href="https://console.curseforge.com/" target="_blank" rel="noopener">console.curseforge.com</a>
+          as <code>CURSEFORGE_API_KEY</code> in <code>/etc/fabricator/fabricator.env</code>, then
+          <code>sudo systemctl restart fabricator</code>.
+        </template>
       </p>
 
       <div v-if="versionFilterExpanded" class="filters filters--extra">
@@ -214,6 +220,7 @@ export default {
       versionFilterExpanded: false,
       catalogSource: 'modrinth',
       curseForgeReady: false,
+      curseForgeStatusDetail: '',
       showDependencyModal: false,
       pendingDependencyContext: null,
       loadVersionsInflight: false
@@ -433,9 +440,11 @@ export default {
     async refreshCatalogStatus() {
       try {
         const status = await getCurseForgeStatus()
-        this.curseForgeReady = Boolean(status?.configured)
+        this.curseForgeReady = Boolean(status?.working)
+        this.curseForgeStatusDetail = status?.working ? '' : (status?.detail || '')
       } catch {
         this.curseForgeReady = false
+        this.curseForgeStatusDetail = ''
       }
     },
 

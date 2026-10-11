@@ -131,8 +131,23 @@ def _load_system_env() -> None:
     if not os.path.exists(_SYSTEM_ENV_FILE):
         return
     try:
-        from dotenv import load_dotenv
+        from dotenv import dotenv_values, load_dotenv
+
         load_dotenv(_SYSTEM_ENV_FILE, override=False)
+        vals = dotenv_values(_SYSTEM_ENV_FILE)
+        use_builtin = str(vals.get("CURSEFORGE_USE_BUILTIN_KEY") or "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        # CurseForge keys look like bcrypt ($2a$10$...). systemd EnvironmentFile
+        # may mangle $; dotenv reads the file as written. Skip injecting a custom
+        # key when the operator asked for the Prism Launcher built-in default.
+        if not use_builtin:
+            cf_key = vals.get("CURSEFORGE_API_KEY")
+            if cf_key and str(cf_key).strip():
+                os.environ["CURSEFORGE_API_KEY"] = str(cf_key).strip()
     except Exception as exc:  # pragma: no cover
         print(f"[WARN] Could not load {_SYSTEM_ENV_FILE}: {exc}")
 

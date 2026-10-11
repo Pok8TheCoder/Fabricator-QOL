@@ -25,6 +25,7 @@ def test_setup_success_writes_hash_and_logs_in(setup_app, setup_client):
         "authenticated": True,
         "needs_setup": False,
         "managed": False,
+        "curseforge_configured": False,
         "panel_version": get_app_version(),
     }
 

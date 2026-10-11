@@ -26,6 +26,8 @@ _PUBLIC_ENDPOINTS = frozenset(
         ("POST", "/api/auth/login"),
         ("GET", "/api/auth/status"),
         ("GET", "/api/health"),
+        # Boolean only; needed before session exists for login-page diagnostics.
+        ("GET", "/api/curseforge/status"),
     }
 )
 

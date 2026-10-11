@@ -223,11 +223,15 @@ def status():
     authenticated = (
         enabled and not needs_setup and session.get("authenticated") is True
     )
+    from backend.curseforge.client import CurseForgeClient
+
     payload = {
         "enabled": enabled,
         "authenticated": authenticated,
         "needs_setup": needs_setup,
         "managed": bool(current_app.config.get("FABRICATOR_MANAGED")),
+        # Public boolean — no secret — so the SPA can enable CurseForge catalog UI.
+        "curseforge_configured": CurseForgeClient().configured(),
     }
     # The version is a fingerprint, and this route answers without a credential
     # (it is on the public allowlist, so a login page can render). So it is

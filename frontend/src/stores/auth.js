@@ -27,6 +27,7 @@ export const useAuthStore = defineStore('auth', () => {
   // version skew) is treated as MANAGED — the fail-safe direction, since a
   // wrongly-unmanaged UI would expose deployment-owned controls.
   const managed = ref(false)
+  const curseforgeConfigured = ref(false)
   const checked = ref(false)
   const loading = ref(false)
 
@@ -39,6 +40,7 @@ export const useAuthStore = defineStore('auth', () => {
     // Safe-default idiom (like playit binary_trust / players onlineMode): a
     // missing field defaults to managed, not unmanaged.
     managed.value = status.managed !== false
+    curseforgeConfigured.value = Boolean(status.curseforge_configured)
     checked.value = true
     return status
   }
@@ -131,6 +133,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     needsSetup,
     managed,
+    curseforgeConfigured,
     checked,
     loading,
     checkStatus,

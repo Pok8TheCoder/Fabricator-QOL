@@ -14,11 +14,16 @@
         <label class="catalog-label">Catalog</label>
         <select v-model="catalogSource" class="catalog-select" @change="onCatalogChange">
           <option value="modrinth">Modrinth</option>
-          <option value="curseforge" :disabled="!curseForgeReady">CurseForge</option>
+          <option value="curseforge">CurseForge</option>
         </select>
       </div>
       <p v-if="catalogSource === 'curseforge' && !curseForgeReady" class="catalog-hint">
-        Set <code>CURSEFORGE_API_KEY</code> in <code>/etc/fabricator/fabricator.env</code> to search CurseForge.
+        <template v-if="curseForgeStatusDetail">{{ curseForgeStatusDetail }}</template>
+        <template v-else>
+          Use a <code>$2a$10$…</code> API key from
+          <a href="https://console.curseforge.com/" target="_blank" rel="noopener">console.curseforge.com</a>
+          in <code>/etc/fabricator/fabricator.env</code>, then restart Fabricator.
+        </template>
       </p>
 
       <div class="import-method">
@@ -199,6 +204,7 @@ const emit = defineEmits(['close', 'install'])
 const importMethod = ref('search')
 const catalogSource = ref('modrinth')
 const curseForgeReady = ref(false)
+const curseForgeStatusDetail = ref('')
 const fileInput = ref(null)
 const uploadedPack = ref(null)
 const uploading = ref(false)
@@ -221,9 +227,11 @@ const imp = useModpackImport({
 async function refreshCatalogStatus() {
   try {
     const status = await getCurseForgeStatus()
-    curseForgeReady.value = Boolean(status?.configured)
+    curseForgeReady.value = Boolean(status?.working)
+    curseForgeStatusDetail.value = status?.working ? '' : (status?.detail || '')
   } catch {
     curseForgeReady.value = false
+    curseForgeStatusDetail.value = ''
   }
 }
 
