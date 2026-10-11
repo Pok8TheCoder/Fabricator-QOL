@@ -44,11 +44,23 @@ export async function getCurseForgeProject(projectId) {
   return get(`/api/curseforge/project/${encodeURIComponent(projectId)}`)
 }
 
-export async function installCurseForgeMod(modId, { mc_version, loader, server_id }) {
-  return post(`/api/curseforge/mod/${encodeURIComponent(modId)}/install`, {
+export async function getCurseForgeModDependencies(modId, { mc_version, loader, server_id }) {
+  return get(`/api/curseforge/mod/${encodeURIComponent(modId)}/dependencies`, {
     mc_version,
     loader,
     server_id
+  })
+}
+
+export async function installCurseForgeMod(
+  modId,
+  { mc_version, loader, server_id, install_dependencies = true } = {}
+) {
+  return post(`/api/curseforge/mod/${encodeURIComponent(modId)}/install`, {
+    mc_version,
+    loader,
+    server_id,
+    install_dependencies
   })
 }
 

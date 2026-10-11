@@ -6,10 +6,17 @@ import SearchResultCard from '../../components/ui/SearchResultCard.vue'
 import { formatFileSize } from '../../utils/format'
 import { installedModDisplayName } from '../../utils/installedModDisplay'
 import { modrinthProjectUrl } from '../../utils/modrinthUrl'
+import { modpackExportUrl } from '../../api/servers'
 import { useServerStore } from '../../stores/server'
 import { contentLabel, isPluginLoader } from '../../utils/loaderKind'
 
 const store = useServerStore()
+
+const exportHref = (format) => {
+  const id = store.server?.id
+  if (!id) return '#'
+  return modpackExportUrl(id, format)
+}
 
 const onSearch = (event) => { store.modSearch = event.target.value }
 
@@ -71,6 +78,18 @@ const selectAllLabel = computed(() => {
           Update {{ updateCount }} {{ updateCount === 1 ? nounSingular.toLowerCase() : nounLower }}
         </AppButton>
         <AppButton v-if="!isPlugin" variant="ghost" @click="store.openModpackBrowser">Browse modpacks</AppButton>
+        <a
+          v-if="!isPlugin"
+          class="mods-page__export-link"
+          :href="exportHref('modrinth')"
+          download
+        >Export Modrinth</a>
+        <a
+          v-if="!isPlugin"
+          class="mods-page__export-link"
+          :href="exportHref('curseforge')"
+          download
+        >Export CurseForge</a>
         <AppButton
           variant="primary"
           :loading="store.isInstalling"
@@ -271,7 +290,23 @@ const selectAllLabel = computed(() => {
 
 .mods-page__actions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--space-2);
+}
+
+.mods-page__export-link {
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  text-decoration: none;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  white-space: nowrap;
+}
+
+.mods-page__export-link:hover {
+  color: var(--color-text);
+  background: var(--color-surface-raised);
 }
 
 .mods-page__install {

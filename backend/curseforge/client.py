@@ -21,6 +21,9 @@ MINECRAFT_GAME_ID = 432
 CLASS_MOD = 6
 CLASS_MODPACK = 4471
 
+# CurseForge FileRelationType — RequiredDependency
+FILE_RELATION_REQUIRED = 3
+
 # https://docs.curseforge.com/#getting-started
 LOADER_TYPE = {
     "forge": 1,
@@ -281,6 +284,70 @@ class CurseForgeClient:
             return self._normalize_mod_hit(data[0], modpack=modpack)
         return None
 
+    def get_mod_file(self, mod_id: str | int, file_id: str | int) -> Dict[str, Any]:
+        response = self._request(
+            "GET",
+            f"/mods/{int(mod_id)}/files/{int(file_id)}",
+        )
+        data = self._json_data(response)
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def required_dependency_mod_ids(file_entry: Dict[str, Any]) -> List[int]:
+        """Mod ids this file lists as required dependencies."""
+        ids: List[int] = []
+        for dep in file_entry.get("dependencies") or []:
+            if not isinstance(dep, dict):
+                continue
+            if dep.get("relationType") != FILE_RELATION_REQUIRED:
+                continue
+            mod_id = dep.get("modId")
+            if mod_id is not None:
+                ids.append(int(mod_id))
+        return ids
+
+    def build_mod_install_order(
+        self,
+        mod_id: str | int,
+        mc_version: str,
+        loader: str | None,
+        installed_mod_ids: set[str],
+    ) -> List[int]:
+        """Return CurseForge mod ids to install, dependencies before dependents.
+
+        ``installed_mod_ids`` holds project ids already recorded on the server
+        (from the content manifest). Mods already present are skipped but their
+        dependencies are still walked so a partial tree is filled in correctly.
+        """
+        order: List[int] = []
+        seen_plan: set[str] = set()
+
+        def plan(mid: str | int) -> None:
+            smid = str(mid)
+            if smid in seen_plan:
+                return
+            seen_plan.add(smid)
+
+            resolved = self.resolve_mod_download(mid, mc_version, loader)
+            if not resolved:
+                raise CurseForgeApiError(
+                    f"No suitable CurseForge file found for mod {mid}"
+                )
+            file_id = resolved.get("file_id")
+            file_entry = self.get_mod_file(mid, file_id)
+            if not file_entry:
+                file_entry = resolved.get("file_entry") or {}
+
+            for dep_id in self.required_dependency_mod_ids(file_entry):
+                if str(dep_id) not in installed_mod_ids:
+                    plan(dep_id)
+
+            if smid not in installed_mod_ids and smid not in {str(x) for x in order}:
+                order.append(int(mid))
+
+        plan(mod_id)
+        return order
+
     def get_files_by_ids(self, file_ids: List[int]) -> List[Dict[str, Any]]:
         """POST /mods/files — batch metadata (Prism FileResolvingTask)."""
         ids = [int(x) for x in file_ids if x]
@@ -289,6 +356,19 @@ class CurseForgeClient:
         response = self._request("POST", "/mods/files", json={"fileIds": ids})
         data = self._json_data(response) or []
         return [f for f in data if isinstance(f, dict)]
+
+    def get_fingerprint_matches(self, fingerprints: List[int]) -> Dict[str, Any]:
+        """POST /fingerprints — map Murmur2 fingerprints to CF mod files."""
+        fps = [int(x) for x in fingerprints if x is not None]
+        if not fps:
+            return {}
+        response = self._request(
+            "POST",
+            f"/fingerprints/{MINECRAFT_GAME_ID}",
+            json={"fingerprints": fps},
+        )
+        data = self._json_data(response)
+        return data if isinstance(data, dict) else {}
 
     def list_files(
         self,
@@ -440,7 +520,29 @@ class CurseForgeClient:
             "file_id": file_id,
             "version_number": file_entry.get("displayName") or str(file_id),
             "hashes": {"sha1": sha1} if sha1 else {},
+            "file_entry": file_entry,
         }
+
+    def install_mod_to_folder(
+        self,
+        mod_id: str | int,
+        mods_folder: Path,
+        mc_version: str,
+        loader: str | None,
+    ) -> Dict[str, Any]:
+        """Download one mod jar into ``mods_folder`` and return install metadata."""
+        resolved = self.resolve_mod_download(mod_id, mc_version, loader)
+        if not resolved:
+            raise CurseForgeApiError(f"No suitable CurseForge file found for mod {mod_id}")
+        file_path = self.download_to(
+            resolved["url"],
+            mods_folder,
+            resolved["filename"],
+            sha1=(resolved.get("hashes") or {}).get("sha1"),
+        )
+        resolved["path"] = str(file_path)
+        resolved["file"] = file_path.name
+        return resolved
 
     def install_modpack(
         self,

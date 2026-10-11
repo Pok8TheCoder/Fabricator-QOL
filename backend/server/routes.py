@@ -8,17 +8,20 @@ import os
 import re
 import shutil
 import stat
+import tempfile
 import threading
 import uuid
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, after_this_request, jsonify, request, send_file
 
 logger = logging.getLogger(__name__)
 
 from backend.auth.redaction import is_token_request
 from backend.modrinth import pending as pending_modpack
 from backend.modrinth import modmeta  # noqa: F401  (re-exported for tests)
-from backend.modrinth.client import ModrinthClient
+from backend.curseforge.client import CurseForgeApiError, CurseForgeClient
+from backend.modrinth.client import ModrinthApiError, ModrinthClient
+from backend.server import modpack_export
 from backend.server.manager import ServerManager
 from backend.server.registry import get_server_process_registry
 from backend.server import storage
@@ -1220,6 +1223,72 @@ def list_server_mods(server_id, server):
         files.append(entry)
 
     return jsonify(sorted(files, key=lambda entry: entry['name'].lower()))
+
+
+@server_bp.route('/servers/<server_id>/mods/export', methods=['GET'])
+@require_server
+def export_server_modpack(server_id, server):
+    """Download installed mods as a Modrinth .mrpack or CurseForge manifest zip."""
+    fmt = (request.args.get('format') or 'modrinth').strip().lower()
+    if fmt not in ('modrinth', 'curseforge'):
+        return jsonify({'error': 'format must be modrinth or curseforge'}), 400
+    strict = bool_from_str(request.args.get('strict', ''))
+
+    try:
+        mods_path = _registry().resolve_mods_path(server)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    modrinth_client = ModrinthClient()
+    curseforge_client = CurseForgeClient()
+    try:
+        result = modpack_export.build_modpack_export(
+            server,
+            mods_path,
+            format=fmt,
+            modrinth_client=modrinth_client,
+            curseforge_client=curseforge_client,
+        )
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+    except CurseForgeApiError as exc:
+        status = exc.status_code or 503
+        if status < 400 or status > 599:
+            status = 503
+        return jsonify({'error': str(exc)}), status
+    except ModrinthApiError as exc:
+        status = exc.status_code or 502
+        if status < 400 or status > 599:
+            status = 502
+        return jsonify({'error': str(exc)}), status
+
+    if strict and result.unresolved:
+        return jsonify({
+            'error': 'Some mods could not be resolved for export',
+            'unresolved': result.unresolved,
+            'included': result.included,
+        }), 409
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f'.{result.download_name.split(".")[-1]}')
+    tmp.write(result.data)
+    tmp.close()
+
+    @after_this_request
+    def _cleanup(response):
+        try:
+            Path(tmp.name).unlink(missing_ok=True)
+        except OSError:
+            pass
+        if result.unresolved:
+            response.headers['X-Fabricator-Export-Unresolved'] = str(len(result.unresolved))
+        return response
+
+    return send_file(
+        tmp.name,
+        as_attachment=True,
+        download_name=result.download_name,
+        mimetype='application/octet-stream',
+    )
 
 
 @server_bp.route('/servers/<server_id>/mods/<path:filename>', methods=['DELETE'])

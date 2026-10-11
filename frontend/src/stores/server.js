@@ -999,19 +999,43 @@ export const useServerStore = defineStore('server', () => {
     installLoading.value = true
     try {
       const installOne = modData.catalog === 'curseforge' ? installCurseForgeMod : installMod
+      const cfWithDeps =
+        modData.catalog === 'curseforge' && modData.installDependencies !== false
+
+      if (cfWithDeps) {
+        const result = await installCurseForgeMod(modData.modId, {
+          mc_version: modData.mcVersion,
+          loader: modData.loader,
+          server_id: currentServerId.value,
+          install_dependencies: true
+        })
+        const depCount = (result?.dependenciesInstalled || []).length
+        const suffix =
+          depCount > 0 ? ` and ${depCount} dependenc${depCount === 1 ? 'y' : 'ies'}` : ''
+        toast.success(`${modData.modTitle} installed successfully${suffix}!`, 'Mod Installed')
+        await loadMods()
+        return
+      }
+
       for (const pre of prereqs) {
         if (!pre?.modId) continue
         await installOne(pre.modId, {
           mc_version: modData.mcVersion,
           loader: modData.loader,
-          server_id: currentServerId.value
+          server_id: currentServerId.value,
+          ...(modData.catalog === 'curseforge'
+            ? { install_dependencies: modData.installDependencies !== false }
+            : {})
         })
         await loadMods()
       }
       await installOne(modData.modId, {
         mc_version: modData.mcVersion,
         loader: modData.loader,
-        server_id: currentServerId.value
+        server_id: currentServerId.value,
+        ...(modData.catalog === 'curseforge'
+          ? { install_dependencies: modData.installDependencies !== false }
+          : {})
       })
       const suffix =
         prereqs.length > 0 ? ` and ${prereqs.length} dependenc${prereqs.length === 1 ? 'y' : 'ies'}` : ''

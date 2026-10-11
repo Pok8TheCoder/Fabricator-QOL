@@ -47,6 +47,7 @@ _READ = [
     ("GET", "/api/curseforge/search"),
     ("GET", "/api/curseforge/modpacks/search"),
     ("GET", "/api/curseforge/mod/<mod_id>"),
+    ("GET", "/api/curseforge/mod/<mod_id>/dependencies"),
     ("GET", "/api/curseforge/project/<project_id>"),
     ("GET", "/api/curseforge/modpack/install-progress/<server_id>"),
     # Identifies the mods folder's jars against Modrinth by content hash.

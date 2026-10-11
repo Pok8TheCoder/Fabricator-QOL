@@ -97,7 +97,8 @@
 
         <p class="form-hint">
           Choose a pack from Modrinth or CurseForge by link or search, or upload
-          a Modrinth <code>.mrpack</code> you exported yourself. The Minecraft
+          a pack exported from Prism Launcher (<code>.mrpack</code> or CurseForge <code>.zip</code>).
+          The Minecraft
           version and loader in Basic Settings are filled in from the pack when
           possible.
         </p>
@@ -131,16 +132,21 @@
                 <input type="radio" v-model="formData.modpackImportMethod" value="search">
                 <span>Search</span>
               </label>
-              <label class="choice-pill" :class="{ disabled: modpackCatalogSource === 'curseforge' }">
+              <label class="choice-pill">
                 <input
                   type="radio"
                   v-model="formData.modpackImportMethod"
                   value="file"
-                  :disabled="modpackCatalogSource === 'curseforge'"
                 >
-                <span>Upload .mrpack</span>
+                <span>{{ packFileImportLabel }}</span>
               </label>
             </div>
+            <p
+              v-if="formData.modpackImportMethod === 'file'"
+              class="pack-file-import-hint"
+            >
+              {{ packFileImportHint }}
+            </p>
           </div>
 
           <div v-if="formData.modpackImportMethod === 'link'" class="form-row modpack-input-row">
@@ -256,21 +262,19 @@
                declares its own Minecraft version and loader, so selecting one
                fills those fields in — editable afterwards, with a warning if
                they end up disagreeing with the pack. -->
-          <div v-else-if="modpackCatalogSource === 'curseforge'" class="form-hint">
-            CurseForge packs cannot be uploaded here — use Link or Search, or switch catalog to Modrinth for .mrpack uploads.
-          </div>
-
           <div v-else class="mrpack-upload">
             <FormField
               label="Modpack File"
-              hint="A .mrpack exported by the Modrinth app. Mods are fetched from Modrinth; config and other extras come from the pack's overrides."
+              :hint="modpackCatalogSource === 'curseforge'
+                ? 'A CurseForge-format .zip from Prism Launcher (manifest.json). Mods download from CurseForge; configs come from overrides/.'
+                : 'A Modrinth .mrpack or zip from Prism Launcher (modrinth.index.json). Mods download from Modrinth; extras come from overrides/.'"
             >
               <template #default="{ id, describedBy }">
                 <input
                   :id="id"
                   ref="mrpackInput"
                   type="file"
-                  accept=".mrpack,application/zip"
+                  accept=".mrpack,.zip,application/zip"
                   :disabled="packUploading"
                   :aria-describedby="describedBy"
                   @change="handlePackFileChange"
@@ -911,6 +915,17 @@ export default {
       get() { return this.imp?.errorMessage ?? '' },
       set(v) { if (this.imp) this.imp.errorMessage = v }
     },
+    packFileImportLabel() {
+      return this.modpackCatalogSource === 'curseforge'
+        ? 'Prism / CurseForge zip'
+        : 'Prism / Modrinth pack'
+    },
+    packFileImportHint() {
+      if (this.modpackCatalogSource === 'curseforge') {
+        return 'Upload a CurseForge modpack .zip from Prism Launcher (manifest.json). Mods download from CurseForge; configs come from overrides/.'
+      }
+      return 'Upload a Modrinth .mrpack or Prism zip (modrinth.index.json). Mods download from Modrinth; extras come from overrides/.'
+    },
     uploadedPackTitle() {
       return this.uploadedPack?.name || this.uploadedPack?.filename || 'Uploaded modpack'
     },
@@ -919,6 +934,9 @@ export default {
         return ''
       }
       const parts = []
+      if (this.uploadedPack.catalog) {
+        parts.push(this.uploadedPack.catalog === 'curseforge' ? 'CurseForge' : 'Modrinth')
+      }
       if (this.uploadedPack.version) parts.push(`Version ${this.uploadedPack.version}`)
       if (this.uploadedPack.minecraft_version) parts.push(`Minecraft ${this.uploadedPack.minecraft_version}`)
       if (this.uploadedPack.loader) parts.push(this.loaderLabelFor(this.uploadedPack.loader))
@@ -1109,9 +1127,6 @@ export default {
       this.clearSelectedModpack()
       this.clearUploadedPack()
       if (this.modpackCatalogSource === 'curseforge') {
-        if (this.formData.modpackImportMethod === 'file') {
-          this.formData.modpackImportMethod = 'search'
-        }
         this.refreshCurseForgeStatus()
       }
       if (this.formData.modpackImportMethod === 'search') {
@@ -1251,6 +1266,9 @@ export default {
           registerAbort: (abort) => { this.packUploadAbort = abort }
         })
         this.uploadedPack = pack
+        if (pack.catalog === 'curseforge' || pack.catalog === 'modrinth') {
+          this.modpackCatalogSource = pack.catalog
+        }
         await this.applyPackDefaults(pack)
       } catch (error) {
         this.resetPackFileInput()
@@ -1260,7 +1278,7 @@ export default {
         if (error?.message === 'Upload cancelled') {
           return
         }
-        this.packUploadError = error?.message || 'Could not read that .mrpack file.'
+        this.packUploadError = error?.message || 'Could not read that modpack file. Use a Prism export (.mrpack, Modrinth zip, or CurseForge .zip with manifest.json).'
         this.toast.error(this.packUploadError, 'Modpack Upload Failed')
       } finally {
         this.packUploading = false
@@ -1440,6 +1458,7 @@ export default {
         return {
           source: 'upload',
           upload_id: this.uploadedPack.upload_id,
+          catalog: this.uploadedPack.catalog || this.modpackCatalogSource,
           loader: this.formData.loader,
           mc_version: this.formData.version,
         }
@@ -1736,7 +1755,7 @@ export default {
 
       if (this.formData.setupMode === 'modpack' && !this.selectedModpack && !this.uploadedPack) {
         this.toast.warning(
-          'Choose a modpack by link or search, or upload a .mrpack, before creating the server.',
+          'Choose a modpack by link or search, or import a Prism / modpack file, before creating the server.',
           'Modpack Required',
         )
         return
@@ -2046,6 +2065,13 @@ export default {
   color: var(--text-secondary);
   font-family: inherit;
   font-size: var(--text-sm);
+}
+
+.pack-file-import-hint {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.45;
 }
 
 .catalog-hint {

@@ -154,6 +154,12 @@ export async function getInstalledMods(serverId) {
   return get(`/api/servers/${serverId}/mods`)
 }
 
+/** Download link for exporting installed mods as Modrinth or CurseForge modpack. */
+export function modpackExportUrl(serverId, format = 'modrinth') {
+  const fmt = format === 'curseforge' ? 'curseforge' : 'modrinth'
+  return `/api/servers/${serverId}/mods/export?format=${fmt}`
+}
+
 export async function removeMod(serverId, modName) {
   return del(`/api/servers/${serverId}/mods/${encodeURIComponent(modName)}`)
 }

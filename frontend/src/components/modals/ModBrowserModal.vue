@@ -172,7 +172,11 @@ import {
   resolveProjectVersion,
   getModDetails
 } from '../../api/modrinth'
-import { searchCurseForgeMods, getCurseForgeStatus } from '../../api/curseforge'
+import {
+  searchCurseForgeMods,
+  getCurseForgeStatus,
+  getCurseForgeModDependencies
+} from '../../api/curseforge'
 import { useServerStore } from '../../stores/server'
 import { installedEntryMatchesBrowseHit, installedEntryMatchesProjectRef } from '../../utils/modrinthJarMatch'
 import { formatNumber, truncate } from '../../utils/format'
@@ -496,7 +500,7 @@ export default {
         return
       }
       if (this.catalogSource === 'curseforge') {
-        this.performInstall(mod)
+        await this.prepareCurseForgeInstall(mod)
         return
       }
       const status = this.getCompatibilityStatus(mod)
@@ -511,6 +515,36 @@ export default {
       }
 
       await this.prepareInstall(mod)
+    },
+
+    /** CurseForge: surface required deps (backend installs them unless the user picks mod-only). */
+    async prepareCurseForgeInstall(mod) {
+      const store = useServerStore()
+      const serverId = store.currentServerId
+      if (!serverId) {
+        this.performInstall(mod)
+        return
+      }
+      try {
+        const { missing } = await getCurseForgeModDependencies(mod.project_id, {
+          mc_version: this.mcVersion,
+          loader: (this.loader || 'fabric').toLowerCase(),
+          server_id: serverId
+        })
+        if (Array.isArray(missing) && missing.length > 0) {
+          this.pendingDependencyContext = {
+            mod,
+            mcVersion: this.mcVersion,
+            missing,
+            catalog: 'curseforge'
+          }
+          this.showDependencyModal = true
+          return
+        }
+      } catch (e) {
+        console.warn('CurseForge dependency check skipped:', e)
+      }
+      this.performInstall(mod)
     },
 
     /** Resolves the Modrinth version used for install and warns when required dependencies are missing. */
@@ -573,7 +607,7 @@ export default {
       this.performInstall(mod, versionOverride)
     },
 
-    performInstall(mod, versionOverride = null, prerequisiteMods = null) {
+    performInstall(mod, versionOverride = null, prerequisiteMods = null, options = {}) {
       const preferredVersion = versionOverride || this.mcVersion
       const payload = {
         modId: mod.project_id,
@@ -584,6 +618,9 @@ export default {
       }
       if (Array.isArray(prerequisiteMods) && prerequisiteMods.length > 0) {
         payload.prerequisiteMods = prerequisiteMods
+      }
+      if (this.catalogSource === 'curseforge' && options.installDependencies === false) {
+        payload.installDependencies = false
       }
       this.$emit('install', payload)
     },
@@ -618,6 +655,10 @@ export default {
       const ctx = this.pendingDependencyContext
       this.cancelDependencyInstall()
       if (!ctx?.mod) return
+      if (ctx.catalog === 'curseforge') {
+        this.performInstall(ctx.mod, ctx.mcVersion, null, { installDependencies: false })
+        return
+      }
       this.performInstall(ctx.mod, ctx.mcVersion)
     },
 
@@ -625,6 +666,10 @@ export default {
       const ctx = this.pendingDependencyContext
       this.cancelDependencyInstall()
       if (!ctx?.mod) return
+      if (ctx.catalog === 'curseforge') {
+        this.performInstall(ctx.mod, ctx.mcVersion)
+        return
+      }
       this.performInstall(ctx.mod, ctx.mcVersion, ctx.missing)
     },
 

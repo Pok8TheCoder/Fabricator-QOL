@@ -158,7 +158,7 @@ export async function installModpack(projectId, {
 }
 
 /**
- * Upload a .mrpack exported from the Modrinth app (#53).
+ * Upload a modpack archive (#53): Modrinth .mrpack or CurseForge/Prism .zip.
  *
  * The archive is staged, not installed: the response describes what the pack
  * declares (`name`, `minecraft_version`, `loader`, ...) so the create form can

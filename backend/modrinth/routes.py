@@ -818,33 +818,30 @@ def install_modpack(project_id, server):
 
 @modrinth_bp.route('/modpack/upload', methods=['POST'])
 def upload_modpack_archive():
-    """Stage an uploaded .mrpack and report what it declares.
+    """Stage an uploaded modpack zip and report what it declares.
 
-    The raw archive bytes are the request body (``fetch(url, {body: file})``);
-    the display filename comes from the ``filename`` query param or the
-    ``X-Filename`` header — the same shape as the world-import upload.
-
-    Nothing is installed here. The response carries the Minecraft version and
-    loader the pack was built against so the create form can fill itself in
-    before the server it will be installed on even exists (#53).
+    Accepts Modrinth ``.mrpack`` (``modrinth.index.json``) and CurseForge /
+    Prism Launcher exports (``manifest.json``). The raw archive bytes are the
+    request body; the display filename comes from the ``filename`` query param
+    or ``X-Filename`` header (#53).
     """
     original_name = (
         request.args.get('filename')
         or request.headers.get('X-Filename')
         or 'modpack.mrpack'
     )
-    safe_display = secure_filename(original_name) or 'modpack.mrpack'
+    safe_display = secure_filename(original_name) or 'modpack.zip'
+    suffix = Path(safe_display).suffix.lower()
+    if suffix not in ('.mrpack', '.zip'):
+        safe_display = f"{safe_display}.zip"
 
     max_bytes = mrpack.max_upload_bytes()
     if request.content_length and request.content_length > max_bytes:
         return jsonify({'error': f'Upload exceeds the {max_bytes}-byte limit'}), 413
 
-    # Abandoned uploads (a create dialog closed without installing) are swept
-    # here rather than on a timer: an upload is the only moment this feature
-    # is guaranteed to be running.
     mrpack.sweep_expired()
 
-    temp_path = mrpack.staging_dir() / f'mrpack-{uuid.uuid4().hex}.mrpack'
+    temp_path = mrpack.staging_dir() / f'modpack-{uuid.uuid4().hex}{Path(safe_display).suffix}'
     try:
         written = stream_upload_to_temp(request.stream, temp_path, max_bytes=max_bytes)
     except UploadTooLargeError as exc:
@@ -857,13 +854,17 @@ def upload_modpack_archive():
         temp_path.unlink(missing_ok=True)
         return jsonify({'error': 'Empty upload — no file received'}), 400
 
+    from backend.modpack.upload_format import (
+        UnsupportedPackArchiveError,
+        inspect_uploaded_archive,
+    )
+
     try:
-        index = mrpack.read_index(temp_path)
-    except mrpack.InvalidMrpackError as exc:
+        _catalog, summary = inspect_uploaded_archive(temp_path)
+    except (mrpack.InvalidMrpackError, UnsupportedPackArchiveError) as exc:
         temp_path.unlink(missing_ok=True)
         return jsonify({'error': str(exc)}), 400
 
-    summary = mrpack.describe(index, temp_path)
     staged = mrpack.stage(
         temp_path, filename=safe_display, size_bytes=written, summary=summary
     )
@@ -906,8 +907,22 @@ def install_uploaded_modpack(upload_id, server):
             }), 409
 
     loader = data.get('loader') or staged.summary.get('loader') or server.get('loader')
+    catalog = str(staged.summary.get('catalog') or 'modrinth').lower()
 
     def _run(install_path, progress_cb):
+        if catalog == 'curseforge':
+            from backend.curseforge.client import CurseForgeClient
+
+            cf = CurseForgeClient()
+            if _parse_bool(data.get('clean_install'), default=True):
+                from backend.modrinth.client import ModrinthClient
+
+                ModrinthClient().clean_modpack_switch_paths(install_path)
+            return cf._install_curseforge_archive(
+                staged.path,
+                install_path,
+                progress_callback=progress_cb,
+            )
         return modrinth_client.install_mrpack_archive(
             staged.path,
             install_path,
@@ -919,17 +934,22 @@ def install_uploaded_modpack(upload_id, server):
         )
 
     def _modpack_info(result):
-        return {
+        info = {
             'projectId': None,
             'versionId': None,
-            'name': result.get('name') or staged.filename,
-            'version': result.get('version'),
-            'mcVersion': result.get('mc_version'),
-            'loaders': result.get('loaders', []),
-            'source': 'upload',
+            'name': result.get('name') or staged.summary.get('name') or staged.filename,
+            'version': result.get('version') or staged.summary.get('version'),
+            'mcVersion': result.get('mc_version') or staged.summary.get('minecraft_version'),
+            'loaders': result.get('loaders', []) or (
+                [staged.summary.get('loader')] if staged.summary.get('loader') else []
+            ),
+            'source': 'upload' if catalog != 'curseforge' else 'curseforge',
             'fileName': staged.filename,
             'installedAt': iso_z_now(),
         }
+        if catalog == 'curseforge':
+            info['source'] = 'curseforge'
+        return info
 
     response = _run_modpack_install(
         server, data, _run, _modpack_info, log_label=staged.filename

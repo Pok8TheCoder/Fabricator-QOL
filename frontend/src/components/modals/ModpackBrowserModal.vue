@@ -37,15 +37,19 @@
         </label>
         <label class="choice-pill">
           <input type="radio" v-model="importMethod" value="file">
-          <span>Upload .mrpack</span>
+          <span>{{ packFileImportLabel }}</span>
         </label>
       </div>
+
+      <p v-if="importMethod === 'file'" class="pack-file-import-hint">
+        {{ packFileImportHint }}
+      </p>
 
       <div v-if="importMethod === 'file'" class="upload-row">
         <input
           ref="fileInput"
           type="file"
-          accept=".mrpack,application/zip"
+          accept=".mrpack,.zip,application/zip"
           :disabled="uploading"
           @change="handleFileChange"
         >
@@ -148,7 +152,7 @@
       <h3 class="modpack-browser-empty__heading" v-else-if="importMethod === 'search'">Search for modpacks</h3>
       <h3 class="modpack-browser-empty__heading" v-else>Resolve a modpack link</h3>
       <p class="modpack-browser-empty__body" v-if="importMethod === 'file'">
-        Pick a .mrpack exported from the Modrinth app. Its mods are fetched from Modrinth; config and other extras come from the pack's overrides.
+        Upload a Prism Launcher export: Modrinth <code>.mrpack</code> / zip, or CurseForge <code>.zip</code> with <code>manifest.json</code>.
       </p>
       <p class="modpack-browser-empty__body" v-else-if="importMethod === 'search' && imp.showingPopular.value">
         No modpacks are listed for {{ loaderLabel }} {{ mcVersion }}. Try searching by name, or check that this Minecraft version has compatible packs.
@@ -160,7 +164,7 @@
         Search for modpacks compatible with {{ mcVersion }}.
       </p>
       <p class="modpack-browser-empty__body" v-else>
-        Paste a Modrinth modpack link or slug to resolve it.
+        Paste a {{ catalogSource === 'curseforge' ? 'CurseForge' : 'Modrinth' }} modpack link or slug to resolve it.
       </p>
     </div>
 
@@ -218,6 +222,17 @@ const loaderLabel = computed(() => {
   return value.charAt(0).toUpperCase() + value.slice(1)
 })
 
+const packFileImportLabel = computed(() =>
+  catalogSource.value === 'curseforge' ? 'Prism / CurseForge zip' : 'Prism / Modrinth pack'
+)
+
+const packFileImportHint = computed(() => {
+  if (catalogSource.value === 'curseforge') {
+    return 'CurseForge modpack .zip from Prism Launcher (manifest.json). Mods download from CurseForge; configs from overrides/.'
+  }
+  return 'Modrinth .mrpack or Prism zip (modrinth.index.json). Mods download from Modrinth; extras from overrides/.'
+})
+
 const imp = useModpackImport({
   mcVersion: () => props.mcVersion,
   loader: () => props.loader,
@@ -250,6 +265,9 @@ const uploadedPackDetail = computed(() => {
   const pack = uploadedPack.value
   if (!pack) return ''
   const parts = []
+  if (pack.catalog) {
+    parts.push(pack.catalog === 'curseforge' ? 'CurseForge' : 'Modrinth')
+  }
   if (pack.version) parts.push(`Version ${pack.version}`)
   if (pack.minecraft_version) parts.push(`Minecraft ${pack.minecraft_version}`)
   if (pack.loader) parts.push(pack.loader)
@@ -311,16 +329,20 @@ async function handleFileChange(event) {
   uploadPercent.value = 0
   uploadError.value = ''
   try {
-    uploadedPack.value = await uploadModpackArchive(file, {
+    const pack = await uploadModpackArchive(file, {
       onProgress: (pct) => { uploadPercent.value = pct },
       registerAbort: (abort) => { abortUpload = abort }
     })
+    uploadedPack.value = pack
+    if (pack.catalog === 'curseforge' || pack.catalog === 'modrinth') {
+      catalogSource.value = pack.catalog
+    }
   } catch (error) {
     if (fileInput.value) fileInput.value.value = ''
     // Cancelling is something the user just did (closed the modal, picked a
     // different file); only a real failure is worth reporting.
     if (error?.message !== 'Upload cancelled') {
-      uploadError.value = error?.message || 'Could not read that .mrpack file.'
+      uploadError.value = error?.message || 'Could not read that modpack file. Use a Prism export (.mrpack, Modrinth zip, or CurseForge .zip with manifest.json).'
     }
   } finally {
     uploading.value = false
@@ -457,6 +479,13 @@ function formatModpackMeta(pack) {
   margin: 0;
   font-size: var(--text-xs);
   color: var(--text-muted);
+}
+
+.pack-file-import-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.45;
 }
 
 .import-method {

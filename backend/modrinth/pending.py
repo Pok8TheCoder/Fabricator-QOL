@@ -84,6 +84,9 @@ def normalize_intent(raw: Any) -> Optional[Dict[str, Any]]:
         if not upload_id:
             return None
         intent["upload_id"] = upload_id
+        upload_catalog = str(raw.get("catalog") or "").strip().lower()
+        if upload_catalog in ("modrinth", "curseforge"):
+            intent["catalog"] = upload_catalog
 
     overrides = raw.get("mod_side_overrides")
     if isinstance(overrides, dict):
@@ -148,13 +151,25 @@ def prepare(client: Any, intent: Dict[str, Any]) -> PreparedPack:
                 ".mrpack again and install it from the server's dashboard"
             )
         summary = staged.summary or {}
+        catalog = str(
+            summary.get("catalog") or intent.get("catalog") or "modrinth"
+        ).lower()
+        if catalog not in ("modrinth", "curseforge"):
+            catalog = "modrinth"
         return PreparedPack(
             archive=staged.path,
             loader=intent.get("loader") or str(summary.get("loader") or ""),
             loader_version=str(summary.get("loader_version") or ""),
             filename=staged.filename,
             source="upload",
+            catalog=catalog,
             upload_id=upload_id,
+            identity={
+                "name": summary.get("name"),
+                "version": summary.get("version"),
+                "mc_version": summary.get("minecraft_version"),
+                "loaders": [summary.get("loader")] if summary.get("loader") else [],
+            },
         )
 
     project_id = intent.get("project_id") or ""
