@@ -158,6 +158,13 @@ export async function removeMod(serverId, modName) {
   return del(`/api/servers/${serverId}/mods/${encodeURIComponent(modName)}`)
 }
 
+/** Rename mod.jar ↔ mod.jar.disabled (server will not load disabled files). */
+export async function toggleMod(serverId, filename) {
+  return post(
+    `/api/servers/${serverId}/mods/${encodeURIComponent(filename)}/toggle`
+  )
+}
+
 /** Bulk sibling of removeMod; answers with `{ deleted, errors }` per filename. */
 export async function bulkRemoveMods(serverId, filenames) {
   return del(`/api/servers/${serverId}/mods`, { filenames })

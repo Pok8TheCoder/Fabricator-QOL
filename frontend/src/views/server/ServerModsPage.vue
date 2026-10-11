@@ -17,6 +17,7 @@ const onSearch = (event) => { store.modSearch = event.target.value }
  *  Modrinth release when the install manifest knows it, else 'local'. */
 const modMeta = (mod) => {
   const parts = []
+  if (mod.disabled) parts.push('disabled')
   if (mod.version) parts.push(mod.version)
   const update = store.modUpdates[mod.filename]
   if (update) parts.push(`update: ${update.versionNumber}`)
@@ -179,6 +180,7 @@ const selectAllLabel = computed(() => {
           :description="mod.filename"
           :meta="modMeta(mod)"
           :selected="store.selectedModPaths.has(mod.path)"
+          :muted="mod.disabled"
         >
           <template #lead>
             <label
@@ -211,13 +213,22 @@ const selectAllLabel = computed(() => {
               </svg>
             </a>
             <button
-              v-if="modrinthProjectUrl(mod)"
+              v-if="modrinthProjectUrl(mod) && !mod.disabled"
               type="button"
               class="mods-page__version-btn"
               :title="`Change the installed version of ${installedModDisplayName(mod)}`"
               @click="store.openVersionPicker(mod)"
             >
               Version
+            </button>
+            <button
+              type="button"
+              class="mods-page__toggle"
+              :disabled="store.togglingModPath === mod.path"
+              :title="mod.disabled ? 'Enable this mod' : 'Disable this mod (renames to .disabled)'"
+              @click="store.toggleModEnabled(mod)"
+            >
+              {{ mod.disabled ? 'Enable' : 'Disable' }}
             </button>
             <button type="button" class="mods-page__remove" @click="store.handleRemoveMod(mod)">Remove</button>
           </div>
@@ -486,6 +497,28 @@ const selectAllLabel = computed(() => {
 .mods-page__version-btn:hover {
   color: var(--primary);
   border-color: var(--primary);
+}
+
+.mods-page__toggle {
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: var(--text-xs);
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.mods-page__toggle:hover:not(:disabled) {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.mods-page__toggle:disabled {
+  opacity: 0.6;
+  cursor: wait;
 }
 
 .mods-page__remove:hover {

@@ -19,12 +19,16 @@ defineProps({
   selected: {
     type: Boolean,
     default: false
+  },
+  muted: {
+    type: Boolean,
+    default: false
   }
 })
 </script>
 
 <template>
-  <article class="search-result-card" :class="{ 'is-selected': selected }">
+  <article class="search-result-card" :class="{ 'is-selected': selected, 'is-muted': muted }">
     <div v-if="$slots.lead" class="search-result-card__lead">
       <slot name="lead" />
     </div>
@@ -64,6 +68,11 @@ defineProps({
 .search-result-card.is-selected {
   border-color: var(--primary);
   box-shadow: 0 0 0 2px color-mix(in oklch, var(--primary) 20%, transparent);
+}
+
+.search-result-card.is-muted {
+  opacity: 0.55;
+  filter: grayscale(0.35);
 }
 
 /* Optional leading control (e.g. the installed list's bulk-select checkbox).

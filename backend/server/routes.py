@@ -33,6 +33,7 @@ from backend.server.installer import (
 from backend.server.java_compat import resolve_required_java, skip_java_enforcement
 from backend.server import java_manager
 from backend.server import jvm_args
+from backend.server import mod_files
 from backend.server.locks import get_server_lock, try_acquire, discard_lock
 from backend.utils import platform as platform_utils
 from backend.utils.java import parse_java_major, parse_java_version_string
@@ -1206,10 +1207,16 @@ def list_server_mods(server_id, server):
     for path in mods_path.iterdir():
         if not path.is_file():
             continue
+        if not mod_files.is_mod_content_filename(path.name):
+            continue
         entry = _serialize_file_entry(path, mods_path)
-        recorded = manifest.get(path.name)
+        manifest_key = mod_files.manifest_key_for_filename(path.name)
+        recorded = manifest.get(manifest_key)
         if recorded:
             entry['modrinth'] = recorded
+        entry['disabled'] = mod_files.is_disabled_mod_filename(path.name)
+        if entry['disabled']:
+            entry['enabledFilename'] = manifest_key
         files.append(entry)
 
     return jsonify(sorted(files, key=lambda entry: entry['name'].lower()))
@@ -1228,8 +1235,52 @@ def delete_server_mod(server_id, filename, server):
         return jsonify({'error': 'Mod file not found'}), 404
 
     _unlink_with_retry(target)
-    storage.forget_content(server_id, [target.name])
+    storage.forget_content(
+        server_id, [mod_files.manifest_key_for_filename(target.name)]
+    )
     return jsonify({'success': True, 'message': f'{target.name} removed'})
+
+
+@server_bp.route('/servers/<server_id>/mods/<path:filename>/toggle', methods=['POST'])
+@require_server
+def toggle_server_mod(server_id, filename, server):
+    """Enable or disable a mod by renaming ``mod.jar`` ↔ ``mod.jar.disabled``."""
+    try:
+        mods_path = _registry().resolve_mods_path(server)
+        target = _ensure_child_path(mods_path, filename)
+    except ValueError as exc:
+        return jsonify({'error': str(exc)}), 400
+
+    if not target.exists() or not target.is_file():
+        return jsonify({'error': 'Mod file not found'}), 404
+
+    if not mod_files.is_mod_content_filename(target.name):
+        return jsonify({'error': 'Only .jar mods can be toggled'}), 400
+
+    try:
+        if mod_files.is_disabled_mod_filename(target.name):
+            dest = mods_path / mod_files.enabled_mod_filename(target.name)
+            if dest.exists():
+                return jsonify({'error': 'Enabled mod file already exists'}), 409
+            target.rename(dest)
+            enabled = True
+            new_name = dest.name
+        else:
+            dest = mods_path / mod_files.disabled_mod_filename(target.name)
+            if dest.exists():
+                return jsonify({'error': 'Disabled mod file already exists'}), 409
+            target.rename(dest)
+            enabled = False
+            new_name = dest.name
+    except OSError as exc:
+        return jsonify({'error': f'Could not rename mod: {exc}'}), 500
+
+    return jsonify({
+        'success': True,
+        'enabled': enabled,
+        'filename': new_name,
+        'message': f'{new_name} {"enabled" if enabled else "disabled"}',
+    })
 
 
 @server_bp.route('/servers/<server_id>/mods', methods=['DELETE'])
@@ -1261,7 +1312,7 @@ def bulk_delete_server_mods(server_id, server):
             continue
         _unlink_with_retry(target)
         deleted.append(filename)
-        forget_names.append(target.name)
+        forget_names.append(mod_files.manifest_key_for_filename(target.name))
 
     storage.forget_content(server_id, forget_names)
     return jsonify({'success': True, 'deleted': deleted, 'errors': errors})

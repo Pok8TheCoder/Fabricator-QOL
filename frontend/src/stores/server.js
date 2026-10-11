@@ -13,6 +13,7 @@ import {
   getServers,
   getInstalledMods,
   removeMod,
+  toggleMod,
   bulkRemoveMods,
   getServerLogs,
   startServer,
@@ -131,6 +132,7 @@ export const useServerStore = defineStore('server', () => {
   const modToRemove = ref(null)
   const selectedModPaths = ref(new Set())
   const bulkDeleting = ref(false)
+  const togglingModPath = ref(null)
   // filename -> { projectId, versionId, versionNumber } for jars with a newer
   // compatible release (#80).
   const modUpdates = ref({})
@@ -554,6 +556,8 @@ export const useServerStore = defineStore('server', () => {
         return {
           name: file.name,
           filename: file.name,
+          disabled: Boolean(file.disabled),
+          enabledFilename: file.enabledFilename || file.name,
           displayTitle: recorded?.title || null,
           iconUrl: recorded?.iconUrl || null,
           modrinth: recorded,
@@ -1261,6 +1265,27 @@ export const useServerStore = defineStore('server', () => {
     await runModpackInstall({ ...data, modSideOverrides: overrides || {} })
   }
 
+  async function toggleModEnabled(mod) {
+    const filename = mod.filename || mod.name
+    if (!filename || togglingModPath.value) return
+    togglingModPath.value = mod.path
+    try {
+      const result = await toggleMod(currentServerId.value, filename)
+      const label = installedModDisplayName(mod) || filename
+      if (result.enabled) {
+        toast.success(`${label} enabled`, 'Mod enabled')
+      } else {
+        toast.success(`${label} disabled`, 'Mod disabled')
+      }
+      await loadMods()
+    } catch (error) {
+      console.error('Failed to toggle mod:', error)
+      toast.error('Failed to change mod state', 'Error')
+    } finally {
+      togglingModPath.value = null
+    }
+  }
+
   function handleRemoveMod(mod) {
     modToRemove.value = mod
     confirmModalData.value = {
@@ -1649,6 +1674,7 @@ export const useServerStore = defineStore('server', () => {
     modToRemove,
     selectedModPaths,
     bulkDeleting,
+    togglingModPath,
     modUpdates,
     updatingMods,
     installLoading,
@@ -1752,6 +1778,7 @@ export const useServerStore = defineStore('server', () => {
     confirmInstallWithMissingMods,
     cancelUncertainModsDecision,
     confirmUncertainModsDecision,
+    toggleModEnabled,
     handleRemoveMod,
     confirmRemoveMod,
     cancelRemoveMod,
