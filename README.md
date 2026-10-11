@@ -6,6 +6,8 @@
 
 **Self-hosted web dashboard for managing Minecraft servers.**
 
+> **Upstream & credit** — This project is a fork of [Fabricator](https://github.com/philderks/Fabricator) by [**Philipp Noél Derks**](https://github.com/philderks) and **Linus Sommermeyer** (see upstream `LICENSE`). They authored the original software, documentation, and design. We maintain this copy independently, **with our own edits and QOL** improvements. Please star and support the [official repository](https://github.com/philderks/Fabricator) and [fabricator.site](https://fabricator.site/). This fork remains under the same [AGPL-3.0](LICENSE) license as upstream.
+
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/philderks/Fabricator?style=flat-square)](https://github.com/philderks/Fabricator/stargazers)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Docker-lightgrey?style=flat-square)](https://github.com/philderks/Fabricator)
