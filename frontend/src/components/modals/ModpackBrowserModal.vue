@@ -10,6 +10,17 @@
         Filtered to Minecraft {{ mcVersion }} ({{ loaderLabel }})
       </div>
 
+      <div class="catalog-row">
+        <label class="catalog-label">Catalog</label>
+        <select v-model="catalogSource" class="catalog-select" @change="onCatalogChange">
+          <option value="modrinth">Modrinth</option>
+          <option value="curseforge" :disabled="!curseForgeReady">CurseForge</option>
+        </select>
+      </div>
+      <p v-if="catalogSource === 'curseforge' && !curseForgeReady" class="catalog-hint">
+        Set <code>CURSEFORGE_API_KEY</code> in <code>/etc/fabricator/fabricator.env</code> to search CurseForge.
+      </p>
+
       <div class="import-method">
         <label class="choice-pill">
           <input type="radio" v-model="importMethod" value="search">
@@ -71,7 +82,7 @@
           <input
             v-model="imp.modpackLink.value"
             type="text"
-            placeholder="https://modrinth.com/modpack/... or slug"
+            :placeholder="catalogSource === 'curseforge' ? 'https://www.curseforge.com/minecraft/modpacks/... or slug' : 'https://modrinth.com/modpack/... or slug'"
             @keyup.enter="imp.resolveByLink()"
           >
         </div>
@@ -97,7 +108,7 @@
          and the empty state below stays on the same if/else chain. -->
     <template v-else-if="imp.searchResults.value.length">
       <p v-if="imp.showingPopular.value" class="results-heading">
-        Popular on Modrinth for {{ loaderLabel }} {{ mcVersion }}
+        Popular on {{ catalogSource === 'curseforge' ? 'CurseForge' : 'Modrinth' }} for {{ loaderLabel }} {{ mcVersion }}
       </p>
 
       <div class="results-grid">
@@ -174,6 +185,7 @@ import SearchResultCard from '../ui/SearchResultCard.vue'
 import AppButton from '../ui/AppButton.vue'
 import { useModpackImport } from '../../composables/useModpackImport'
 import { uploadModpackArchive, discardModpackUpload } from '../../api/modrinth'
+import { getCurseForgeStatus } from '../../api/curseforge'
 import { formatNumber, truncate } from '../../utils/format'
 
 const props = defineProps({
@@ -185,6 +197,8 @@ const props = defineProps({
 const emit = defineEmits(['close', 'install'])
 
 const importMethod = ref('search')
+const catalogSource = ref('modrinth')
+const curseForgeReady = ref(false)
 const fileInput = ref(null)
 const uploadedPack = ref(null)
 const uploading = ref(false)
@@ -200,8 +214,25 @@ const loaderLabel = computed(() => {
 
 const imp = useModpackImport({
   mcVersion: () => props.mcVersion,
-  loader: () => props.loader
+  loader: () => props.loader,
+  catalogSource: () => catalogSource.value
 })
+
+async function refreshCatalogStatus() {
+  try {
+    const status = await getCurseForgeStatus()
+    curseForgeReady.value = Boolean(status?.configured)
+  } catch {
+    curseForgeReady.value = false
+  }
+}
+
+function onCatalogChange() {
+  imp.resetAll()
+  if (props.show && importMethod.value === 'search') {
+    imp.loadPopular()
+  }
+}
 
 const uploadedPackTitle = computed(
   () => uploadedPack.value?.name || uploadedPack.value?.filename || 'Uploaded modpack'
@@ -244,9 +275,7 @@ const canInstall = computed(() =>
 
 watch(() => props.show, (next) => {
   if (next) {
-    // Open onto something browsable instead of an empty box. Filtered to this
-    // server's version and loader, as the heading promises — a popular pack it
-    // cannot install is worse than no suggestion at all.
+    refreshCatalogStatus()
     imp.loadPopular()
     return
   }
@@ -350,6 +379,7 @@ function confirmInstall() {
     title: imp.selectedModpack.value.title,
     mcVersion: props.mcVersion,
     loader: (props.loader || 'fabric').toLowerCase(),
+    catalog: imp.selectedModpack.value.catalog || catalogSource.value
   })
 }
 
@@ -391,6 +421,34 @@ function formatModpackMeta(pack) {
   color: var(--text-secondary);
   font-size: var(--text-xs);
   background: color-mix(in oklch, var(--primary) 8%, transparent);
+}
+
+.catalog-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.catalog-label {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.catalog-select {
+  min-width: 10rem;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+}
+
+.catalog-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
 }
 
 .import-method {

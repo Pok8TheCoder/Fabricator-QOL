@@ -73,5 +73,11 @@ export function installedEntryMatchesProjectRef(entry, projectRef) {
  */
 export function installedEntryMatchesBrowseHit(entry, mod) {
   if (!mod) return false
+  const recorded = entry.modrinth
+  if (mod.catalog === 'curseforge' || recorded?.source === 'curseforge') {
+    const wanted = String(mod.project_id || '')
+    const owned = String(recorded?.projectId || '')
+    if (wanted && owned && wanted === owned) return true
+  }
   return installedEntryMatchesProjectRef(entry, { id: mod.project_id, slug: mod.slug })
 }

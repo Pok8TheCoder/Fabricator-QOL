@@ -45,16 +45,17 @@ def test_manage_bucket_is_exactly_the_expected_set():
         ("DELETE", "/api/servers/<server_id>/mods"),
         ("DELETE", "/api/servers/<server_id>/mods/<path:filename>"),
         ("POST", "/api/servers/<server_id>/mods/<path:filename>/toggle"),
+        ("POST", "/api/curseforge/mod/<mod_id>/install"),
     }
     assert manage == expected
 
 
 def test_read_and_manage_counts():
     counts = Counter(BUCKETS.values())
-    assert counts["read"] == 34
-    assert counts["manage"] == 8
-    assert counts["never"] == 64
-    assert sum(counts.values()) == 106
+    assert counts["read"] == 40
+    assert counts["manage"] == 9
+    assert counts["never"] == 65
+    assert sum(counts.values()) == 114
 
 
 def test_the_console_and_settings_routes_are_never():

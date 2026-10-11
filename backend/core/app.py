@@ -10,6 +10,7 @@ from backend.core.config import get_config
 from backend.auth import init_auth
 from backend.server.routes import server_bp
 from backend.modrinth.routes import modrinth_bp
+from backend.curseforge.routes import curseforge_bp
 from backend.system.routes import system_bp
 from backend.backups.routes import backups_bp
 from backend.server.players.routes import players_bp
@@ -53,6 +54,7 @@ def create_app() -> Flask:
 
     app.register_blueprint(server_bp)
     app.register_blueprint(modrinth_bp)
+    app.register_blueprint(curseforge_bp)
     app.register_blueprint(system_bp)
     app.register_blueprint(backups_bp)
     app.register_blueprint(players_bp)

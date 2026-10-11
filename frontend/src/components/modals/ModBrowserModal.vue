@@ -32,6 +32,11 @@
           <option value="newest">Newest</option>
         </select>
 
+        <select v-model="catalogSource" class="filters__catalog" @change="onCatalogChange">
+          <option value="modrinth">Modrinth</option>
+          <option value="curseforge" :disabled="!curseForgeReady">CurseForge</option>
+        </select>
+
         <button
           type="button"
           class="filter-version-toggle"
@@ -40,6 +45,10 @@
           {{ versionFilterExpanded ? 'Hide version filter' : 'Version filter' }}
         </button>
       </div>
+
+      <p v-if="catalogSource === 'curseforge' && !curseForgeReady" class="catalog-hint">
+        CurseForge search needs <code>CURSEFORGE_API_KEY</code> in <code>/etc/fabricator/fabricator.env</code>.
+      </p>
 
       <div v-if="versionFilterExpanded" class="filters filters--extra">
         <select v-model="selectedVersion" class="filters__version-select" @change="performSearch">
@@ -157,6 +166,7 @@ import {
   resolveProjectVersion,
   getModDetails
 } from '../../api/modrinth'
+import { searchCurseForgeMods, getCurseForgeStatus } from '../../api/curseforge'
 import { useServerStore } from '../../stores/server'
 import { installedEntryMatchesBrowseHit, installedEntryMatchesProjectRef } from '../../utils/modrinthJarMatch'
 import { formatNumber, truncate } from '../../utils/format'
@@ -202,6 +212,8 @@ export default {
       pendingCompatibilityVersions: [],
       modVersionCache: {},
       versionFilterExpanded: false,
+      catalogSource: 'modrinth',
+      curseForgeReady: false,
       showDependencyModal: false,
       pendingDependencyContext: null,
       loadVersionsInflight: false
@@ -411,8 +423,29 @@ export default {
       }, 500);
     },
 
+    onCatalogChange() {
+      this.results = []
+      if (this.searchQuery.trim()) {
+        this.performSearch()
+      }
+    },
+
+    async refreshCatalogStatus() {
+      try {
+        const status = await getCurseForgeStatus()
+        this.curseForgeReady = Boolean(status?.configured)
+      } catch {
+        this.curseForgeReady = false
+      }
+    },
+
     async performSearch() {
       if (!this.searchQuery.trim()) {
+        this.results = []
+        return
+      }
+
+      if (this.catalogSource === 'curseforge' && !this.curseForgeReady) {
         this.results = []
         return
       }
@@ -420,20 +453,27 @@ export default {
       this.loading = true
 
       try {
-        const data = await searchMods({
-          query: this.searchQuery,
-          version: this.effectiveSearchVersion,
-          // Plugin platforms span multiple Modrinth categories (paper/spigot/
-          // bukkit); narrowing the search facet to one would hide the others,
-          // so we search unfiltered and intersect the facet chain client-side.
-          loader: this.isPlugin ? '' : this.selectedLoader,
-          projectType: this.projectType,
-          sort: this.sortBy,
-          limit: 20
-        })
+        const data = this.catalogSource === 'curseforge'
+          ? await searchCurseForgeMods({
+            query: this.searchQuery,
+            version: this.effectiveSearchVersion,
+            loader: this.isPlugin ? '' : this.selectedLoader,
+            sort: this.sortBy,
+            limit: 20
+          })
+          : await searchMods({
+            query: this.searchQuery,
+            version: this.effectiveSearchVersion,
+            loader: this.isPlugin ? '' : this.selectedLoader,
+            projectType: this.projectType,
+            sort: this.sortBy,
+            limit: 20
+          })
 
         const hits = data.hits || []
-        this.results = hits.filter((mod) => this.modSupportsAnyLoader(mod))
+        this.results = this.catalogSource === 'curseforge'
+          ? hits
+          : hits.filter((mod) => this.modSupportsAnyLoader(mod))
       } catch (error) {
         console.error('Search failed:', error)
         this.results = []
@@ -444,6 +484,10 @@ export default {
 
     async installMod(mod) {
       if (this.isModInstalled(mod)) {
+        return
+      }
+      if (this.catalogSource === 'curseforge') {
+        this.performInstall(mod)
         return
       }
       const status = this.getCompatibilityStatus(mod)
@@ -526,7 +570,8 @@ export default {
         modId: mod.project_id,
         modTitle: mod.title,
         mcVersion: preferredVersion,
-        loader: (this.loader || 'fabric').toLowerCase()
+        loader: (this.loader || 'fabric').toLowerCase(),
+        catalog: this.catalogSource
       }
       if (Array.isArray(prerequisiteMods) && prerequisiteMods.length > 0) {
         payload.prerequisiteMods = prerequisiteMods
@@ -679,6 +724,7 @@ export default {
   },
   created() {
     this.loadVersions()
+    this.refreshCatalogStatus()
   },
   watch: {
     show(newVal) {
@@ -695,8 +741,11 @@ export default {
       this.selectedLoader = (this.loader || 'fabric').toLowerCase()
       this.selectedVersion = this.mcVersion || ''
 
-      if (newVal && !this.availableVersions.length) {
-        this.loadVersions()
+      if (newVal) {
+        this.refreshCatalogStatus()
+        if (!this.availableVersions.length) {
+          this.loadVersions()
+        }
       }
     },
     mcVersion(newVal) {
@@ -776,6 +825,17 @@ export default {
 .filter-version-toggle:hover {
   border-color: var(--primary);
   color: var(--text-secondary);
+}
+
+.catalog-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: var(--leading-normal);
+}
+
+.filters__catalog {
+  min-width: 8rem;
 }
 
 .filters select {

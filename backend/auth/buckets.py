@@ -43,6 +43,12 @@ _READ = [
     ("GET", "/api/modrinth/project/<project_id>/versions"),
     ("GET", "/api/modrinth/search"),
     ("GET", "/api/modrinth/version/<version_id>"),
+    ("GET", "/api/curseforge/status"),
+    ("GET", "/api/curseforge/search"),
+    ("GET", "/api/curseforge/modpacks/search"),
+    ("GET", "/api/curseforge/mod/<mod_id>"),
+    ("GET", "/api/curseforge/project/<project_id>"),
+    ("GET", "/api/curseforge/modpack/install-progress/<server_id>"),
     # Identifies the mods folder's jars against Modrinth by content hash.
     # Audited CLEAN: no caller input reaches a path (the folder comes from the
     # stored record), the upstream host is fixed, and the response is bare
@@ -67,6 +73,7 @@ _MANAGE = [
     ("DELETE", "/api/servers/<server_id>/mods"),
     ("DELETE", "/api/servers/<server_id>/mods/<path:filename>"),
     ("POST", "/api/servers/<server_id>/mods/<path:filename>/toggle"),
+    ("POST", "/api/curseforge/mod/<mod_id>/install"),
 ]
 
 # --- NEVER: no token, either scope ------------------------------------------ #
@@ -122,6 +129,7 @@ _NEVER = [
     ("POST", "/api/modrinth/modpack/upload"),
     ("POST", "/api/modrinth/modpack/upload/<upload_id>/install"),
     ("DELETE", "/api/modrinth/modpack/upload/<upload_id>"),
+    ("POST", "/api/curseforge/modpack/<project_id>/install"),
     # players reads: personal data (names, UUIDs, IP addresses, per-player
     # "last seen"). No redaction makes these safe to hand an assistant, and they
     # answer no question the diagnosis use case asks.

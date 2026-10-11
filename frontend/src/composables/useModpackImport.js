@@ -1,10 +1,33 @@
 import { ref } from 'vue'
 import { getProjectDetails, searchModpacks } from '../api/modrinth'
+import { getCurseForgeProject, searchCurseForgeModpacks } from '../api/curseforge'
 import { isLoaderCategory } from '../utils/loaderKind'
 
 /**
  * Extract a Modrinth project slug or ID from a URL, slug, or raw ID.
  */
+export function parseCurseForgeRef(input) {
+  const raw = (input || '').trim()
+  if (!raw) return { slug: '', modpack: true }
+  if (!raw.startsWith('http://') && !raw.startsWith('https://')) {
+    return { slug: raw.replace(/^@/, ''), modpack: true }
+  }
+  try {
+    const parsed = new URL(raw)
+    const parts = parsed.pathname.split('/').filter(Boolean)
+    const idx = parts.indexOf('minecraft')
+    if (idx >= 0 && parts[idx + 1] === 'modpacks' && parts[idx + 2]) {
+      return { slug: parts[idx + 2], modpack: true }
+    }
+    if (idx >= 0 && parts[idx + 1] === 'mc-mods' && parts[idx + 2]) {
+      return { slug: parts[idx + 2], modpack: false }
+    }
+  } catch {
+    return { slug: '', modpack: true }
+  }
+  return { slug: '', modpack: true }
+}
+
 export function parseProjectRef(input) {
   const raw = (input || '').trim()
   if (!raw) {
@@ -34,6 +57,7 @@ export function normalizeModpack(project) {
   return {
     id: project.project_id || project.id,
     slug: project.slug || '',
+    catalog: project.catalog || 'modrinth',
     title: project.title || project.name || project.slug || 'Unknown Modpack',
     description: project.description || '',
     downloads: project.downloads || 0,
@@ -77,7 +101,7 @@ function isNotFoundError(error) {
  * @param {import('vue').Ref<string>|() => string} options.mcVersion
  * @param {import('vue').Ref<string>|() => string} options.loader
  */
-export function useModpackImport({ mcVersion, loader } = {}) {
+export function useModpackImport({ mcVersion, loader, catalogSource } = {}) {
   const searchQuery = ref('')
   const modpackLink = ref('')
   const searchResults = ref([])
@@ -92,6 +116,7 @@ export function useModpackImport({ mcVersion, loader } = {}) {
 
   const getVersion = () => (typeof mcVersion === 'function' ? mcVersion() : mcVersion?.value) || ''
   const getLoader = () => (typeof loader === 'function' ? loader() : loader?.value) || ''
+  const getCatalog = () => (typeof catalogSource === 'function' ? catalogSource() : catalogSource?.value) || 'modrinth'
 
   function selectPack(pack) {
     selectedModpack.value = normalizeModpack(pack)
@@ -144,12 +169,19 @@ export function useModpackImport({ mcVersion, loader } = {}) {
     searchDone.value = false
     errorMessage.value = ''
     try {
-      const response = await searchModpacks({
-        query,
-        version: getVersion(),
-        loader: getLoader(),
-        limit: 12
-      })
+      const response = getCatalog() === 'curseforge'
+        ? await searchCurseForgeModpacks({
+          query,
+          version: getVersion(),
+          loader: getLoader(),
+          limit: 12
+        })
+        : await searchModpacks({
+          query,
+          version: getVersion(),
+          loader: getLoader(),
+          limit: 12
+        })
       searchResults.value = Array.isArray(response.hits) ? response.hits : []
     } catch (error) {
       searchResults.value = []
@@ -161,6 +193,26 @@ export function useModpackImport({ mcVersion, loader } = {}) {
   }
 
   async function resolveByLink() {
+    if (getCatalog() === 'curseforge') {
+      const { slug } = parseCurseForgeRef(modpackLink.value)
+      if (!slug) {
+        errorMessage.value = 'Enter a valid CurseForge modpack link or slug.'
+        return
+      }
+      resolving.value = true
+      errorMessage.value = ''
+      try {
+        const project = await getCurseForgeProject(slug)
+        searchResults.value = [project]
+        selectPack(project)
+      } catch (error) {
+        errorMessage.value = error.message || 'Could not resolve CurseForge modpack.'
+      } finally {
+        resolving.value = false
+      }
+      return
+    }
+
     const projectRef = parseProjectRef(modpackLink.value)
     if (!projectRef) {
       errorMessage.value = 'Enter a valid Modrinth modpack link, slug, or project ID.'

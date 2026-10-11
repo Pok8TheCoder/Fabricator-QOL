@@ -9,6 +9,10 @@ import {
   getModpackInstallProgress
 } from '../api/modrinth'
 import {
+  installCurseForgeMod,
+  installCurseForgeModpack
+} from '../api/curseforge'
+import {
   getServer,
   getServers,
   getInstalledMods,
@@ -994,16 +998,17 @@ export const useServerStore = defineStore('server', () => {
     const prereqs = Array.isArray(modData.prerequisiteMods) ? modData.prerequisiteMods : []
     installLoading.value = true
     try {
+      const installOne = modData.catalog === 'curseforge' ? installCurseForgeMod : installMod
       for (const pre of prereqs) {
         if (!pre?.modId) continue
-        await installMod(pre.modId, {
+        await installOne(pre.modId, {
           mc_version: modData.mcVersion,
           loader: modData.loader,
           server_id: currentServerId.value
         })
         await loadMods()
       }
-      await installMod(modData.modId, {
+      await installOne(modData.modId, {
         mc_version: modData.mcVersion,
         loader: modData.loader,
         server_id: currentServerId.value
@@ -1171,15 +1176,23 @@ export const useServerStore = defineStore('server', () => {
           mod_side_overrides: modpackData.modSideOverrides || null,
           force: Boolean(modpackData.force)
         })
-        : await installModpack(modpackData.projectId, {
-          mc_version: modpackData.mcVersion,
-          loader: modpackData.loader,
-          server_id: currentServerId.value,
-          clean_install: !isRetry,
-          create_backup: isRetry ? false : modpackData.createBackup,
-          allow_missing: Boolean(modpackData.allowMissing),
-          mod_side_overrides: modpackData.modSideOverrides || null
-        })
+        : modpackData.catalog === 'curseforge'
+          ? await installCurseForgeModpack(modpackData.projectId, {
+            mc_version: modpackData.mcVersion,
+            loader: modpackData.loader,
+            server_id: currentServerId.value,
+            clean_install: !isRetry,
+            create_backup: isRetry ? false : modpackData.createBackup
+          })
+          : await installModpack(modpackData.projectId, {
+            mc_version: modpackData.mcVersion,
+            loader: modpackData.loader,
+            server_id: currentServerId.value,
+            clean_install: !isRetry,
+            create_backup: isRetry ? false : modpackData.createBackup,
+            allow_missing: Boolean(modpackData.allowMissing),
+            mod_side_overrides: modpackData.modSideOverrides || null
+          })
       showModpackBrowser.value = false
       showModpackInstallConfirmModal.value = false
       pendingModpackInstall.value = null
