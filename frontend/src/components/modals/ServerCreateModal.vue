@@ -96,12 +96,30 @@
       <Panel v-if="showModpackPanel" title="Modpack Setup">
 
         <p class="form-hint">
-          Choose a Modrinth pack by link, by search, or by uploading a .mrpack
-          file you exported yourself. The Minecraft version and loader in Basic
-          Settings are filled in from the pack.
+          Choose a pack from Modrinth or CurseForge by link or search, or upload
+          a Modrinth <code>.mrpack</code> you exported yourself. The Minecraft
+          version and loader in Basic Settings are filled in from the pack when
+          possible.
         </p>
 
         <div class="modpack-panel">
+          <div class="catalog-row">
+            <label class="catalog-label" for="modpack-catalog">Catalog</label>
+            <select
+              id="modpack-catalog"
+              v-model="modpackCatalogSource"
+              class="catalog-select"
+              @change="onModpackCatalogChange"
+            >
+              <option value="modrinth">Modrinth</option>
+              <option value="curseforge">CurseForge</option>
+            </select>
+          </div>
+          <p v-if="modpackCatalogSource === 'curseforge' && !curseForgeReady" class="catalog-hint">
+            <template v-if="curseForgeStatusDetail">{{ curseForgeStatusDetail }}</template>
+            <template v-else>CurseForge search is loading…</template>
+          </p>
+
           <div class="form-group">
             <label>Import Method</label>
             <div class="inline-choice">
@@ -113,8 +131,13 @@
                 <input type="radio" v-model="formData.modpackImportMethod" value="search">
                 <span>Search</span>
               </label>
-              <label class="choice-pill">
-                <input type="radio" v-model="formData.modpackImportMethod" value="file">
+              <label class="choice-pill" :class="{ disabled: modpackCatalogSource === 'curseforge' }">
+                <input
+                  type="radio"
+                  v-model="formData.modpackImportMethod"
+                  value="file"
+                  :disabled="modpackCatalogSource === 'curseforge'"
+                >
                 <span>Upload .mrpack</span>
               </label>
             </div>
@@ -122,13 +145,20 @@
 
           <div v-if="formData.modpackImportMethod === 'link'" class="form-row modpack-input-row">
             <div class="form-group modpack-grow">
-              <FormField label="Modpack URL or Slug" hint="Supports Modrinth links, slugs, or project IDs.">
+              <FormField
+                label="Modpack URL or Slug"
+                :hint="modpackCatalogSource === 'curseforge'
+                  ? 'CurseForge modpack links, curseforge:// URLs, or slugs.'
+                  : 'Modrinth links, slugs, or project IDs.'"
+              >
                 <template #default="{ id, describedBy }">
                   <input
                     :id="id"
                     v-model="modpackLinkInput"
                     type="text"
-                    placeholder="https://modrinth.com/modpack/your-pack"
+                    :placeholder="modpackCatalogSource === 'curseforge'
+                      ? 'https://www.curseforge.com/minecraft/modpacks/...'
+                      : 'https://modrinth.com/modpack/your-pack'"
                     :aria-describedby="describedBy"
                     @keydown.enter.prevent="!modpackLookupLoading && modpackLinkInput.trim() && resolveModpackByLink()"
                   >
@@ -187,16 +217,16 @@
                 v-if="modpackShowingPopular && !modpackSearchLoading"
                 class="modpack-results-heading"
               >
-                Popular on Modrinth — or search above
+                Popular on {{ modpackCatalogSource === 'curseforge' ? 'CurseForge' : 'Modrinth' }} — or search above
               </p>
 
               <div class="modpack-results">
                 <button
                   v-for="pack in modpackSearchResults"
-                  :key="pack.project_id"
+                  :key="pack.id || pack.project_id"
                   type="button"
                   class="modpack-result"
-                  :class="{ selected: selectedModpack && selectedModpack.id === pack.project_id }"
+                  :class="{ selected: selectedModpack && selectedModpack.id === (pack.id || pack.project_id) }"
                   @click="selectModpackFromSearch(pack)"
                 >
                   <div class="modpack-result-header">
@@ -226,6 +256,10 @@
                declares its own Minecraft version and loader, so selecting one
                fills those fields in — editable afterwards, with a warning if
                they end up disagreeing with the pack. -->
+          <div v-else-if="modpackCatalogSource === 'curseforge'" class="form-hint">
+            CurseForge packs cannot be uploaded here — use Link or Search, or switch catalog to Modrinth for .mrpack uploads.
+          </div>
+
           <div v-else class="mrpack-upload">
             <FormField
               label="Modpack File"
@@ -671,6 +705,7 @@ import {
   uploadModpackArchive,
   discardModpackUpload
 } from '../../api/modrinth'
+import { getCurseForgeProject, getCurseForgeStatus } from '../../api/curseforge'
 import { useToast } from '../../composables/useToast'
 import { useModpackImport } from '../../composables/useModpackImport'
 import { formatNumber } from '../../utils/format'
@@ -710,6 +745,9 @@ export default {
       installCreatedServerId: null,  // server.id that the install ran against (for retry)
       versionsLoading: false,
       imp: null,
+      modpackCatalogSource: 'modrinth',
+      curseForgeReady: true,
+      curseForgeStatusDetail: '',
       showJavaModal: false,
       pendingJavaMcVersion: '',
       pendingJavaRetryServerId: null,
@@ -786,8 +824,11 @@ export default {
     // of formData.version's default, or packs get silently filtered out
     // before the user has picked one. The pack itself decides the loader and
     // version once chosen — see applySearchPackDefaults.
-    this.imp = useModpackImport()
+    this.imp = useModpackImport({
+      catalogSource: () => this.modpackCatalogSource,
+    })
     this.loadGameVersions()
+    this.refreshCurseForgeStatus()
   },
   computed: {
     // Module-scope imports are not visible to an Options API template, so the
@@ -1049,6 +1090,32 @@ export default {
         motd: this.formData.motd,
         acceptEula: this.formData.acceptEula,
         javaPath: this.formData.javaPath || undefined
+      }
+    },
+
+    async refreshCurseForgeStatus() {
+      try {
+        const status = await getCurseForgeStatus()
+        this.curseForgeReady = Boolean(status?.working)
+        this.curseForgeStatusDetail = status?.working ? '' : (status?.detail || '')
+      } catch {
+        this.curseForgeReady = false
+        this.curseForgeStatusDetail = ''
+      }
+    },
+
+    onModpackCatalogChange() {
+      if (this.imp) this.imp.resetAll()
+      this.clearSelectedModpack()
+      this.clearUploadedPack()
+      if (this.modpackCatalogSource === 'curseforge') {
+        if (this.formData.modpackImportMethod === 'file') {
+          this.formData.modpackImportMethod = 'search'
+        }
+        this.refreshCurseForgeStatus()
+      }
+      if (this.formData.modpackImportMethod === 'search') {
+        this.loadPopularModpacks()
       }
     },
 
@@ -1343,7 +1410,12 @@ export default {
         return true
       }
 
+      const catalog = this.selectedModpack.catalog || this.modpackCatalogSource
       try {
+        if (catalog === 'curseforge') {
+          await getCurseForgeProject(this.selectedModpack.id)
+          return true
+        }
         await resolveProjectVersion(this.selectedModpack.id, {
           mc_version: this.formData.version,
           loader: this.formData.loader
@@ -1373,8 +1445,10 @@ export default {
         }
       }
       if (this.selectedModpack) {
+        const catalog = this.selectedModpack.catalog || this.modpackCatalogSource
         return {
           source: 'project',
+          catalog,
           project_id: this.selectedModpack.id,
           loader: this.formData.loader,
           mc_version: this.formData.version,
@@ -1952,10 +2026,43 @@ export default {
   background: var(--bg-tertiary);
 }
 
+.catalog-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.catalog-label {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.catalog-select {
+  min-width: 10rem;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--text-sm);
+}
+
+.catalog-hint {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
 .inline-choice {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.choice-pill.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .choice-pill {

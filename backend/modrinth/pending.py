@@ -62,11 +62,16 @@ def normalize_intent(raw: Any) -> Optional[Dict[str, Any]]:
     if source not in SOURCES:
         return None
 
+    catalog = str(raw.get("catalog") or "modrinth").strip().lower()
+    if catalog not in ("modrinth", "curseforge"):
+        catalog = "modrinth"
+
     intent: Dict[str, Any] = {
         "source": source,
         "loader": str(raw.get("loader") or "").strip(),
         "mc_version": str(raw.get("mc_version") or "").strip(),
         "requested_at": iso_z_now(),
+        "catalog": catalog,
     }
 
     if source == "project":
@@ -112,6 +117,7 @@ class PreparedPack:
     loader_version: str = ""
     filename: str = ""
     source: str = "project"
+    catalog: str = "modrinth"
     upload_id: str = ""
     identity: Dict[str, Any] = field(default_factory=dict)
     _tmp_dir: Optional[str] = None
@@ -154,6 +160,48 @@ def prepare(client: Any, intent: Dict[str, Any]) -> PreparedPack:
     project_id = intent.get("project_id") or ""
     if not project_id:
         raise PendingModpackError("The stored modpack request names no project")
+
+    if intent.get("catalog") == "curseforge":
+        from backend.curseforge.client import CurseForgeClient
+
+        cf = CurseForgeClient()
+        mc_version = intent.get("mc_version") or None
+        loader = intent.get("loader") or None
+        file_entry = cf.pick_best_file(project_id, mc_version, loader)
+        if not file_entry:
+            raise PendingModpackError(
+                "No compatible CurseForge modpack file for this Minecraft version and loader"
+            )
+        file_id = file_entry.get("id")
+        pack_url = cf.file_download_url(project_id, file_id)
+        meta = cf.get_mod(project_id)
+        tmp_dir = tempfile.mkdtemp(prefix="fabricator-cf-pack-")
+        try:
+            archive = cf.download_to(
+                pack_url,
+                Path(tmp_dir),
+                file_entry.get("fileName") or "modpack.zip",
+            )
+        except Exception:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise
+        return PreparedPack(
+            archive=archive,
+            loader=str(loader or ""),
+            loader_version="",
+            filename=str(file_entry.get("displayName") or meta.get("title") or "modpack"),
+            source="project",
+            catalog="curseforge",
+            identity={
+                "name": meta.get("title"),
+                "version": file_entry.get("displayName"),
+                "mc_version": mc_version,
+                "loaders": [loader] if loader else [],
+                "project_id": str(project_id),
+                "version_id": str(file_id),
+            },
+            _tmp_dir=tmp_dir,
+        )
 
     best = client._resolve_modpack_version(
         project_id, intent.get("mc_version") or None, intent.get("loader") or None
@@ -202,15 +250,25 @@ def install_prepared(
     worth taking. The interactive install route keeps both options for packs
     going onto a server that already has content.
     """
-    result = client.install_mrpack_archive(
-        prepared.archive,
-        install_path,
-        loader=prepared.loader or None,
-        clean_install=False,
-        allow_missing=True,
-        mod_side_overrides=intent.get("mod_side_overrides"),
-        progress_callback=progress_callback,
-    )
+    if intent.get("catalog") == "curseforge" or prepared.catalog == "curseforge":
+        from backend.curseforge.client import CurseForgeClient
+
+        cf = CurseForgeClient()
+        result = cf._install_curseforge_archive(
+            prepared.archive,
+            install_path,
+            progress_callback=progress_callback,
+        )
+    else:
+        result = client.install_mrpack_archive(
+            prepared.archive,
+            install_path,
+            loader=prepared.loader or None,
+            clean_install=False,
+            allow_missing=True,
+            mod_side_overrides=intent.get("mod_side_overrides"),
+            progress_callback=progress_callback,
+        )
 
     # A pack fetched from Modrinth has an upstream identity the index cannot
     # know; an uploaded one has only its filename.
@@ -239,6 +297,8 @@ def modpack_record(result: Dict[str, Any]) -> Dict[str, Any]:
     if result.get("_source") == "upload":
         record["source"] = "upload"
         record["fileName"] = result.get("_filename")
+    if result.get("source") == "curseforge" or result.get("manifest_type") == "curseforge":
+        record["source"] = "curseforge"
 
     # Warnings the install could not resolve on its own. Nobody was watching
     # when they were raised, so they are kept on the record for the dashboard
